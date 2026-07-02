@@ -43,6 +43,7 @@ import type {
 import { initialTransactions } from "@/lib/cash-flow";
 
 type MainTab = "dashboard" | "transactions" | "attachments";
+type TransactionView = LedgerView | "laporan";
 type AttachmentDraft = Pick<Attachment, "name" | "notes" | "transactionId">;
 
 const monthNames = [
@@ -137,6 +138,7 @@ export function CashFlowDashboard() {
   const [activeMonth, setActiveMonth] = useState("2026-06");
   const [activeTab, setActiveTab] = useState<MainTab>("dashboard");
   const [ledgerView, setLedgerView] = useState<LedgerView>("umum");
+  const [transactionView, setTransactionView] = useState<TransactionView>("umum");
   const [uploadTransactionId, setUploadTransactionId] = useState("");
   const [uploadNotes, setUploadNotes] = useState("");
   const [query, setQuery] = useState("");
@@ -146,6 +148,7 @@ export function CashFlowDashboard() {
   const [editingAttachmentId, setEditingAttachmentId] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -282,6 +285,14 @@ export function CashFlowDashboard() {
     };
   }, [ledgerRows, ledgerView, monthlyTransactions]);
 
+  const transactionViewRows = useMemo(() => {
+    if (transactionView === "laporan") {
+      return monthlyTransactions;
+    }
+
+    return monthlyTransactions.filter((item) => transactionView === "umum" || item.account === transactionView);
+  }, [monthlyTransactions, transactionView]);
+
   async function saveTransaction(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!draft.description.trim() || draft.amount <= 0) {
@@ -314,6 +325,36 @@ export function CashFlowDashboard() {
     setDraft({ ...emptyDraft, date: saved.date });
     setEditingTransactionId("");
     setStatusMessage(editingTransactionId ? "Transaksi berhasil diperbarui." : "Transaksi tersimpan ke database.");
+  }
+
+  async function importExcel(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append("file", file);
+    setIsImporting(true);
+    const response = await fetch("/api/cash-flow/import", {
+      method: "POST",
+      body: formData,
+    });
+    setIsImporting(false);
+    event.target.value = "";
+
+    if (!response.ok) {
+      const data = (await response.json().catch(() => null)) as { message?: string } | null;
+      setStatusMessage(data?.message ?? "Import Excel gagal.");
+      return;
+    }
+
+    const data = (await response.json()) as { imported: number; months: string[]; sheets: string[] };
+    if (data.months.length) {
+      setActiveMonth(data.months.at(-1) ?? activeMonth);
+    }
+    await loadData();
+    setStatusMessage(`Import Excel berhasil: ${data.imported} baris dari ${data.sheets.length} sheet.`);
   }
 
   function startEditTransaction(transaction: Transaction) {
@@ -661,15 +702,21 @@ export function CashFlowDashboard() {
 
         {activeTab === "transactions" ? (
           <TransactionsTab
+            activeMonthLabel={getMonthLabel(activeMonth)}
             draft={draft}
             editingTransactionId={editingTransactionId}
+            isImporting={isImporting}
             isSaving={isSaving}
-            monthlyTransactions={monthlyTransactions}
+            monthlyTransactions={transactionViewRows}
+            onImportExcel={importExcel}
             onCancelEdit={cancelEditTransaction}
             onDelete={deleteTransaction}
             onEdit={startEditTransaction}
             onSubmit={saveTransaction}
             setDraft={setDraft}
+            setTransactionView={setTransactionView}
+            summary={summary}
+            transactionView={transactionView}
           />
         ) : null}
 
@@ -759,25 +806,37 @@ function DashboardTab({
 }
 
 function TransactionsTab({
+  activeMonthLabel,
   draft,
   editingTransactionId,
+  isImporting,
   isSaving,
   monthlyTransactions,
+  onImportExcel,
   onCancelEdit,
   onDelete,
   onEdit,
   onSubmit,
   setDraft,
+  setTransactionView,
+  summary,
+  transactionView,
 }: {
+  activeMonthLabel: string;
   draft: TransactionDraft;
   editingTransactionId: string;
+  isImporting: boolean;
   isSaving: boolean;
   monthlyTransactions: Transaction[];
+  onImportExcel: (event: ChangeEvent<HTMLInputElement>) => void;
   onCancelEdit: () => void;
   onDelete: (id: string) => void;
   onEdit: (transaction: Transaction) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   setDraft: (updater: (current: TransactionDraft) => TransactionDraft) => void;
+  setTransactionView: (view: TransactionView) => void;
+  summary: { debet: number; kredit: number; saldo: number; bank: number; tunai: number };
+  transactionView: TransactionView;
 }) {
   return (
     <section className="grid gap-5 lg:grid-cols-[420px_minmax(0,1fr)]">
@@ -826,39 +885,52 @@ function TransactionsTab({
               </button>
             ) : null}
           </div>
+          <label className="inline-flex h-11 w-full cursor-pointer items-center justify-center gap-2 rounded border border-mosque-green bg-mosque-mint px-4 text-sm font-bold text-mosque-green transition hover:bg-white">
+            <Upload aria-hidden="true" className="h-4 w-4" />
+            {isImporting ? "Mengimport Excel..." : "Upload Excel"}
+            <input type="file" accept=".xlsx,.xls" onChange={onImportExcel} className="sr-only" />
+          </label>
         </div>
       </form>
 
       <div className="rounded border border-slate-200 bg-white p-4 shadow-soft">
-        <PanelTitle icon={<ReceiptText aria-hidden="true" className="h-5 w-5" />} kicker="Data Bulanan" title="Edit dan Hapus Transaksi" />
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[760px] text-sm">
-            <thead>
-              <tr className="border-b border-slate-200 text-left text-slate-500">
-                <th className="py-3 pr-3">Tanggal</th>
-                <th className="px-3 py-3">Uraian</th>
-                <th className="px-3 py-3">No Bukti</th>
-                <th className="px-3 py-3 text-right">Nominal</th>
-                <th className="px-3 py-3">Jenis</th>
-                <th className="py-3 pl-3 text-right">Aksi</th>
-              </tr>
-            </thead>
-            <tbody>
-              {monthlyTransactions.map((item) => (
-                <tr key={item.id} className="border-b border-slate-100">
-                  <td className="py-3 pr-3 font-medium text-mosque-ink">{formatDate(item.date)}</td>
-                  <td className="px-3 py-3 text-slate-700">{item.description}</td>
-                  <td className="px-3 py-3 text-slate-600">{item.proofNumber}</td>
-                  <td className="px-3 py-3 text-right font-bold text-mosque-ink">{formatCurrency(item.amount)}</td>
-                  <td className="px-3 py-3 text-slate-600">{item.type} / {item.account}</td>
-                  <td className="py-3 pl-3">
-                    <ActionButtons onDelete={() => onDelete(item.id)} onEdit={() => onEdit(item)} />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="mb-4 flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+          <PanelTitle icon={<ReceiptText aria-hidden="true" className="h-5 w-5" />} kicker="Data Bulanan" title="Edit dan Hapus Transaksi" compact />
+          <BookViewTabs current={transactionView} onChange={setTransactionView} />
         </div>
+
+        {transactionView === "laporan" ? (
+          <FinancialReport monthLabel={activeMonthLabel} summary={summary} />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[760px] text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 text-left text-slate-500">
+                  <th className="py-3 pr-3">Tanggal</th>
+                  <th className="px-3 py-3">Uraian</th>
+                  <th className="px-3 py-3">No Bukti</th>
+                  <th className="px-3 py-3 text-right">Nominal</th>
+                  <th className="px-3 py-3">Jenis</th>
+                  <th className="py-3 pl-3 text-right">Aksi</th>
+                </tr>
+              </thead>
+              <tbody>
+                {monthlyTransactions.map((item) => (
+                  <tr key={item.id} className="border-b border-slate-100">
+                    <td className="py-3 pr-3 font-medium text-mosque-ink">{formatDate(item.date)}</td>
+                    <td className="px-3 py-3 text-slate-700">{item.description}</td>
+                    <td className="px-3 py-3 text-slate-600">{item.proofNumber}</td>
+                    <td className="px-3 py-3 text-right font-bold text-mosque-ink">{formatCurrency(item.amount)}</td>
+                    <td className="px-3 py-3 text-slate-600">{item.type} / {item.account}</td>
+                    <td className="py-3 pl-3">
+                      <ActionButtons onDelete={() => onDelete(item.id)} onEdit={() => onEdit(item)} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </section>
   );
@@ -1007,6 +1079,81 @@ function AttachmentsTab({
         </div>
       </div>
     </section>
+  );
+}
+
+function BookViewTabs({
+  current,
+  onChange,
+}: {
+  current: TransactionView;
+  onChange: (view: TransactionView) => void;
+}) {
+  const tabs: Array<[TransactionView, string]> = [
+    ["umum", "Buku Kas Umum"],
+    ["bank", "Buku Pembantu Kas Bank"],
+    ["tunai", "Buku Pembantu Kas Tunai"],
+    ["laporan", "Laporan Keuangan Masjid"],
+  ];
+
+  return (
+    <div className="grid gap-1 rounded border border-slate-200 bg-slate-50 p-1 sm:grid-cols-2 xl:grid-cols-4">
+      {tabs.map(([value, label]) => (
+        <button
+          key={value}
+          type="button"
+          onClick={() => onChange(value)}
+          className={`h-9 rounded px-3 text-xs font-bold transition ${
+            current === value ? "bg-white text-mosque-green shadow-sm" : "text-slate-600 hover:text-mosque-ink"
+          }`}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function FinancialReport({
+  monthLabel,
+  summary,
+}: {
+  monthLabel: string;
+  summary: { debet: number; kredit: number; saldo: number; bank: number; tunai: number };
+}) {
+  return (
+    <div className="max-w-3xl rounded border border-slate-300 bg-white">
+      <div className="border-b border-slate-300 bg-mosque-leaf px-4 py-4 text-center font-bold text-mosque-ink">
+        <p>LAPORAN KEUANGAN MASJID</p>
+        <p>MASJID &quot;BAITUL JANNAH&quot;</p>
+        <p>KANWIL KEMENTERIAN AGAMA PROVINSI LAMPUNG</p>
+        <p>BULAN {monthLabel.toUpperCase()}</p>
+      </div>
+      <div className="space-y-5 p-5 text-sm">
+        <div>
+          <p className="mb-2 font-bold text-mosque-ink">Pemasukan</p>
+          <ReportLine label="Kas Bendahara" value={summary.tunai} />
+          <ReportLine label="Kas Bank" value={summary.bank} />
+          <ReportLine label="Total Pemasukan" value={summary.debet} strong />
+        </div>
+        <div>
+          <p className="mb-2 font-bold text-mosque-ink">Pengeluaran</p>
+          <ReportLine label="Total Pengeluaran" value={summary.kredit} strong />
+        </div>
+        <div className="border-t border-slate-300 pt-3">
+          <ReportLine label="Saldo Akhir" value={summary.saldo} strong />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ReportLine({ label, strong, value }: { label: string; strong?: boolean; value: number }) {
+  return (
+    <div className={`grid grid-cols-[1fr_auto] gap-4 py-1 ${strong ? "font-bold text-mosque-ink" : "text-slate-700"}`}>
+      <span>{label}</span>
+      <span>{formatCurrency(value)}</span>
+    </div>
   );
 }
 

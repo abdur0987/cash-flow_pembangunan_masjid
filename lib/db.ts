@@ -4,13 +4,14 @@ import path from "node:path";
 
 import { initialTransactions } from "@/lib/cash-flow";
 
-const databaseUrl = process.env.TURSO_DATABASE_URL ?? `file:${path.join(process.cwd(), "data", "cash-flow.sqlite")}`;
+const tursoDatabaseUrl = process.env.TURSO_DATABASE_URL?.trim();
+const databaseUrl = tursoDatabaseUrl || `file:${path.join(process.cwd(), "data", "cash-flow.sqlite")}`;
 
 if (databaseUrl.startsWith("file:")) {
   mkdirSync(path.dirname(databaseUrl.replace("file:", "")), { recursive: true });
 }
 
-export const databaseDriver = process.env.TURSO_DATABASE_URL ? "turso" : "local-libsql";
+export const databaseDriver = tursoDatabaseUrl ? "turso" : "local-libsql";
 
 export const db = createClient({
   url: databaseUrl,
