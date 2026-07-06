@@ -16,6 +16,7 @@ import {
   BarChart3,
   Download,
   Edit3,
+  Eye,
   FileSpreadsheet,
   FileText,
   Landmark,
@@ -45,6 +46,7 @@ import { initialTransactions } from "@/lib/cash-flow";
 type MainTab = "dashboard" | "transactions" | "attachments";
 type TransactionView = LedgerView | "laporan";
 type AttachmentDraft = Pick<Attachment, "name" | "notes" | "transactionId">;
+type AttachmentMap = Record<string, Attachment[]>;
 
 const monthNames = [
   "Januari",
@@ -146,6 +148,10 @@ export function CashFlowDashboard() {
   const [statusMessage, setStatusMessage] = useState("Menghubungkan database...");
   const [editingTransactionId, setEditingTransactionId] = useState("");
   const [editingAttachmentId, setEditingAttachmentId] = useState("");
+  const [proofPreview, setProofPreview] = useState<{
+    attachments: Attachment[];
+    transaction: Transaction;
+  } | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
@@ -269,6 +275,19 @@ export function CashFlowDashboard() {
       return getMonthKey(item.uploadedAt.slice(0, 10)) === activeMonth;
     });
   }, [activeMonth, attachments, monthlyTransactions]);
+
+  const attachmentMap = useMemo(
+    () =>
+      attachments.reduce<AttachmentMap>((grouped, attachment) => {
+        if (!attachment.transactionId) {
+          return grouped;
+        }
+
+        grouped[attachment.transactionId] = [...(grouped[attachment.transactionId] ?? []), attachment];
+        return grouped;
+      }, {}),
+    [attachments],
+  );
 
   const transactionTotals = useMemo(() => {
     const filteredRows = monthlyTransactions.filter(
@@ -492,6 +511,18 @@ export function CashFlowDashboard() {
     setStatusMessage("Lampiran berhasil dihapus.");
   }
 
+  function openProofPreview(transaction: Transaction) {
+    const transactionAttachments = attachmentMap[transaction.id] ?? [];
+    if (!transactionAttachments.length) {
+      return;
+    }
+
+    setProofPreview({
+      attachments: transactionAttachments,
+      transaction,
+    });
+  }
+
   function refreshData() {
     loadData();
     setLedgerView("umum");
@@ -689,10 +720,12 @@ export function CashFlowDashboard() {
       <div className="mx-auto max-w-7xl px-4 py-5 sm:px-6 lg:px-8">
         {activeTab === "dashboard" ? (
           <DashboardTab
+            attachmentMap={attachmentMap}
             ledgerRows={visibleTransactions}
             ledgerView={ledgerView}
             monthlyChart={monthlyChart}
             monthLabel={getMonthLabel(activeMonth)}
+            onOpenProofs={openProofPreview}
             query={query}
             setLedgerView={setLedgerView}
             setQuery={setQuery}
@@ -703,6 +736,7 @@ export function CashFlowDashboard() {
         {activeTab === "transactions" ? (
           <TransactionsTab
             activeMonthLabel={getMonthLabel(activeMonth)}
+            attachmentMap={attachmentMap}
             draft={draft}
             editingTransactionId={editingTransactionId}
             isImporting={isImporting}
@@ -712,6 +746,7 @@ export function CashFlowDashboard() {
             onCancelEdit={cancelEditTransaction}
             onDelete={deleteTransaction}
             onEdit={startEditTransaction}
+            onOpenProofs={openProofPreview}
             onSubmit={saveTransaction}
             setDraft={setDraft}
             setTransactionView={setTransactionView}
@@ -742,24 +777,35 @@ export function CashFlowDashboard() {
           />
         ) : null}
       </div>
+      {proofPreview ? (
+        <ProofPreviewModal
+          attachments={proofPreview.attachments}
+          onClose={() => setProofPreview(null)}
+          transaction={proofPreview.transaction}
+        />
+      ) : null}
     </main>
   );
 }
 
 function DashboardTab({
+  attachmentMap,
   ledgerRows,
   ledgerView,
   monthlyChart,
   monthLabel,
+  onOpenProofs,
   query,
   setLedgerView,
   setQuery,
   transactionTotals,
 }: {
+  attachmentMap: AttachmentMap;
   ledgerRows: ReturnType<typeof getLedgerRows>;
   ledgerView: LedgerView;
   monthlyChart: { bulan: string; pemasukan: number; pengeluaran: number; saldo: number }[];
   monthLabel: string;
+  onOpenProofs: (transaction: Transaction) => void;
   query: string;
   setLedgerView: (view: LedgerView) => void;
   setQuery: (value: string) => void;
@@ -799,7 +845,12 @@ function DashboardTab({
           </div>
           <LedgerControls ledgerView={ledgerView} query={query} setLedgerView={setLedgerView} setQuery={setQuery} />
         </div>
-        <LedgerTable rows={ledgerRows} totals={transactionTotals} />
+        <LedgerTable
+          attachmentMap={attachmentMap}
+          onOpenProofs={onOpenProofs}
+          rows={ledgerRows}
+          totals={transactionTotals}
+        />
       </div>
     </section>
   );
@@ -807,6 +858,7 @@ function DashboardTab({
 
 function TransactionsTab({
   activeMonthLabel,
+  attachmentMap,
   draft,
   editingTransactionId,
   isImporting,
@@ -816,6 +868,7 @@ function TransactionsTab({
   onCancelEdit,
   onDelete,
   onEdit,
+  onOpenProofs,
   onSubmit,
   setDraft,
   setTransactionView,
@@ -823,6 +876,7 @@ function TransactionsTab({
   transactionView,
 }: {
   activeMonthLabel: string;
+  attachmentMap: AttachmentMap;
   draft: TransactionDraft;
   editingTransactionId: string;
   isImporting: boolean;
@@ -832,6 +886,7 @@ function TransactionsTab({
   onCancelEdit: () => void;
   onDelete: (id: string) => void;
   onEdit: (transaction: Transaction) => void;
+  onOpenProofs: (transaction: Transaction) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   setDraft: (updater: (current: TransactionDraft) => TransactionDraft) => void;
   setTransactionView: (view: TransactionView) => void;
@@ -909,6 +964,7 @@ function TransactionsTab({
                   <th className="py-3 pr-3">Tanggal</th>
                   <th className="px-3 py-3">Uraian</th>
                   <th className="px-3 py-3">No Bukti</th>
+                  <th className="px-3 py-3">Bukti</th>
                   <th className="px-3 py-3 text-right">Nominal</th>
                   <th className="px-3 py-3">Jenis</th>
                   <th className="py-3 pl-3 text-right">Aksi</th>
@@ -920,6 +976,12 @@ function TransactionsTab({
                     <td className="py-3 pr-3 font-medium text-mosque-ink">{formatDate(item.date)}</td>
                     <td className="px-3 py-3 text-slate-700">{item.description}</td>
                     <td className="px-3 py-3 text-slate-600">{item.proofNumber}</td>
+                    <td className="px-3 py-3">
+                      <ProofButton
+                        attachments={attachmentMap[item.id] ?? []}
+                        onClick={() => onOpenProofs(item)}
+                      />
+                    </td>
                     <td className="px-3 py-3 text-right font-bold text-mosque-ink">{formatCurrency(item.amount)}</td>
                     <td className="px-3 py-3 text-slate-600">{item.type} / {item.account}</td>
                     <td className="py-3 pl-3">
@@ -1197,20 +1259,25 @@ function LedgerControls({
 }
 
 function LedgerTable({
+  attachmentMap,
+  onOpenProofs,
   rows,
   totals,
 }: {
+  attachmentMap: AttachmentMap;
+  onOpenProofs: (transaction: Transaction) => void;
   rows: ReturnType<typeof getLedgerRows>;
   totals: { debet: number; kredit: number; saldo: number };
 }) {
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[880px] border-collapse text-sm">
+      <table className="w-full min-w-[980px] border-collapse text-sm">
         <thead>
           <tr className="bg-mosque-leaf text-left text-mosque-ink">
             <th className="border border-slate-700/60 px-3 py-3 font-bold">Tanggal</th>
             <th className="border border-slate-700/60 px-3 py-3 font-bold">Uraian</th>
             <th className="border border-slate-700/60 px-3 py-3 font-bold">No Bukti</th>
+            <th className="border border-slate-700/60 px-3 py-3 text-center font-bold">Bukti</th>
             <th className="border border-slate-700/60 px-3 py-3 text-right font-bold">Debet</th>
             <th className="border border-slate-700/60 px-3 py-3 text-right font-bold">Kredit</th>
             <th className="border border-slate-700/60 px-3 py-3 text-right font-bold">Saldo</th>
@@ -1222,6 +1289,12 @@ function LedgerTable({
               <td className="border border-slate-700/50 px-3 py-2">{formatDate(item.date)}</td>
               <td className="border border-slate-700/50 px-3 py-2 font-medium text-slate-800">{item.description}</td>
               <td className="border border-slate-700/50 px-3 py-2">{item.proofNumber}</td>
+              <td className="border border-slate-700/50 px-3 py-2 text-center">
+                <ProofButton
+                  attachments={attachmentMap[item.id] ?? []}
+                  onClick={() => onOpenProofs(item)}
+                />
+              </td>
               <td className="border border-slate-700/50 px-3 py-2 text-right">{item.debet ? formatNumber(item.debet) : "-"}</td>
               <td className="border border-slate-700/50 px-3 py-2 text-right">{item.kredit ? formatNumber(item.kredit) : "-"}</td>
               <td className="border border-slate-700/50 px-3 py-2 text-right font-bold">{formatNumber(item.saldo)}</td>
@@ -1230,13 +1303,146 @@ function LedgerTable({
         </tbody>
         <tfoot>
           <tr className="bg-slate-200 font-bold">
-            <td className="border border-slate-700/60 px-3 py-3" colSpan={3}>Saldo Akhir</td>
+            <td className="border border-slate-700/60 px-3 py-3" colSpan={4}>Saldo Akhir</td>
             <td className="border border-slate-700/60 px-3 py-3 text-right">{formatNumber(totals.debet)}</td>
             <td className="border border-slate-700/60 px-3 py-3 text-right">{formatNumber(totals.kredit)}</td>
             <td className="border border-slate-700/60 px-3 py-3 text-right">{formatNumber(totals.saldo)}</td>
           </tr>
         </tfoot>
       </table>
+    </div>
+  );
+}
+
+function ProofButton({ attachments, onClick }: { attachments: Attachment[]; onClick: () => void }) {
+  if (!attachments.length) {
+    return <span className="text-slate-400">-</span>;
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="inline-flex h-8 items-center justify-center gap-1 rounded border border-mosque-sky/30 bg-white px-2.5 text-xs font-bold text-mosque-sky transition hover:border-mosque-sky hover:bg-sky-50"
+      title="Lihat bukti transaksi"
+    >
+      <Eye aria-hidden="true" className="h-3.5 w-3.5" />
+      Bukti
+      <span className="rounded bg-sky-100 px-1.5 py-0.5 text-[10px] text-mosque-sky">
+        {attachments.length}
+      </span>
+    </button>
+  );
+}
+
+function ProofPreviewModal({
+  attachments,
+  onClose,
+  transaction,
+}: {
+  attachments: Attachment[];
+  onClose: () => void;
+  transaction: Transaction;
+}) {
+  const [activeAttachmentId, setActiveAttachmentId] = useState(attachments[0]?.id ?? "");
+  const activeAttachment = attachments.find((item) => item.id === activeAttachmentId) ?? attachments[0];
+
+  if (!activeAttachment) {
+    return null;
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
+      <div className="flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded border border-slate-200 bg-white shadow-soft">
+        <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-4 py-3">
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-mosque-gold">Bukti Transaksi</p>
+            <h2 className="truncate text-lg font-bold text-mosque-ink">{transaction.description}</h2>
+            <p className="mt-1 text-xs text-slate-500">
+              {formatDate(transaction.date)} - {transaction.proofNumber} - {formatCurrency(transaction.amount)}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded border border-slate-200 text-slate-600 transition hover:border-red-200 hover:text-red-600"
+            aria-label="Tutup popup bukti"
+          >
+            <X aria-hidden="true" className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="grid min-h-0 flex-1 gap-0 lg:grid-cols-[260px_minmax(0,1fr)]">
+          <aside className="border-b border-slate-200 bg-slate-50 p-3 lg:border-b-0 lg:border-r">
+            <div className="space-y-2">
+              {attachments.map((attachment) => (
+                <button
+                  key={attachment.id}
+                  type="button"
+                  onClick={() => setActiveAttachmentId(attachment.id)}
+                  className={`w-full rounded border px-3 py-2 text-left text-sm transition ${
+                    activeAttachment.id === attachment.id
+                      ? "border-mosque-green bg-white text-mosque-ink shadow-sm"
+                      : "border-slate-200 bg-slate-50 text-slate-600 hover:bg-white"
+                  }`}
+                >
+                  <span className="block truncate font-bold">{attachment.name}</span>
+                  <span className="mt-1 block text-xs text-slate-500">{Math.round(attachment.size / 1024)} KB</span>
+                </button>
+              ))}
+            </div>
+          </aside>
+
+          <div className="min-h-0 overflow-auto p-4">
+            <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-bold text-mosque-ink">{activeAttachment.name}</p>
+                {activeAttachment.notes ? (
+                  <p className="mt-1 text-xs text-slate-500">{activeAttachment.notes}</p>
+                ) : null}
+              </div>
+              <a
+                href={activeAttachment.dataUrl}
+                download={activeAttachment.name}
+                className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded border border-slate-200 bg-white px-3 text-xs font-bold text-mosque-sky transition hover:border-mosque-sky"
+              >
+                <Download aria-hidden="true" className="h-3.5 w-3.5" />
+                Unduh
+              </a>
+            </div>
+            <ProofPreview attachment={activeAttachment} />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ProofPreview({ attachment }: { attachment: Attachment }) {
+  if (attachment.type.startsWith("image/")) {
+    return (
+      <div className="flex min-h-[420px] items-center justify-center rounded border border-slate-200 bg-slate-50 p-3">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={attachment.dataUrl} alt={attachment.name} className="max-h-[65vh] max-w-full rounded object-contain" />
+      </div>
+    );
+  }
+
+  if (attachment.type === "application/pdf") {
+    return (
+      <iframe
+        src={attachment.dataUrl}
+        title={attachment.name}
+        className="h-[65vh] w-full rounded border border-slate-200 bg-slate-50"
+      />
+    );
+  }
+
+  return (
+    <div className="flex min-h-[320px] flex-col items-center justify-center rounded border border-dashed border-slate-300 bg-slate-50 p-6 text-center">
+      <FileText aria-hidden="true" className="h-12 w-12 text-mosque-green" />
+      <p className="mt-3 text-sm font-bold text-mosque-ink">Preview file ini belum tersedia di browser.</p>
+      <p className="mt-1 text-sm text-slate-600">Gunakan tombol unduh untuk membuka dokumen di aplikasi yang sesuai.</p>
     </div>
   );
 }
