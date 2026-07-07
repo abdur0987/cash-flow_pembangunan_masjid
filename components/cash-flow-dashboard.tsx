@@ -529,98 +529,6 @@ export function CashFlowDashboard() {
     setQuery("");
   }
 
-  async function downloadMonthlyExcel() {
-    const XLSX = await import("xlsx");
-    const workbook = XLSX.utils.book_new();
-    const monthLabel = getMonthLabel(activeMonth);
-
-    const currencyFormat = '"Rp" #,##0';
-    const addSheet = (name: string, rows: (string | number)[][], widths: number[]) => {
-      const sheet = XLSX.utils.aoa_to_sheet(rows);
-      sheet["!cols"] = widths.map((wch) => ({ wch }));
-      const styledSheet = sheet as Record<string, { v?: unknown; z?: string }>;
-      Object.keys(styledSheet).forEach((cellAddress) => {
-        if (cellAddress.startsWith("!") || typeof styledSheet[cellAddress].v !== "number") {
-          return;
-        }
-        styledSheet[cellAddress].z = currencyFormat;
-      });
-      XLSX.utils.book_append_sheet(workbook, sheet, name);
-    };
-
-    const reportHeader = [
-      [`PEMBANGUNAN MASJID "BABUL JANNAH"`],
-      ["KANWIL KEMENTERIAN AGAMA PROVINSI LAMPUNG"],
-      [`BULAN ${monthLabel.toUpperCase()}`],
-      [],
-    ];
-
-    const ledgerExportRows = (view: LedgerView) =>
-      getLedgerRows(monthlyTransactions, view).map((item) => [
-        formatDate(item.date),
-        item.description,
-        item.proofNumber,
-        item.debet || "",
-        item.kredit || "",
-        item.saldo,
-      ]);
-
-    addSheet(
-      "Ringkasan",
-      [
-        ...reportHeader,
-        ["Uraian", "Nilai"],
-        ["Total Pemasukan", summary.debet],
-        ["Total Pengeluaran", summary.kredit],
-        ["Saldo Akhir", summary.saldo],
-        ["Buku Kas Bank", summary.bank],
-        ["Buku Kas Tunai", summary.tunai],
-        ["Jumlah Lampiran", selectedMonthAttachments.length],
-      ],
-      [28, 24, 18, 18, 18, 18],
-    );
-
-    addSheet(
-      "Buku Kas Umum",
-      [...reportHeader, ["Tanggal", "Uraian", "No Bukti", "Debet", "Kredit", "Saldo"], ...ledgerExportRows("umum")],
-      [16, 44, 14, 18, 18, 18],
-    );
-
-    addSheet(
-      "Buku Kas Bank",
-      [...reportHeader, ["Tanggal", "Uraian", "No Bukti", "Debet", "Kredit", "Saldo"], ...ledgerExportRows("bank")],
-      [16, 44, 14, 18, 18, 18],
-    );
-
-    addSheet(
-      "Buku Kas Tunai",
-      [...reportHeader, ["Tanggal", "Uraian", "No Bukti", "Debet", "Kredit", "Saldo"], ...ledgerExportRows("tunai")],
-      [16, 44, 14, 18, 18, 18],
-    );
-
-    addSheet(
-      "Lampiran Nota",
-      [
-        ...reportHeader,
-        ["Nama File", "Jenis", "Ukuran KB", "Transaksi", "Catatan", "Tanggal Upload"],
-        ...selectedMonthAttachments.map((item) => {
-          const transaction = transactions.find((row) => row.id === item.transactionId);
-          return [
-            item.name,
-            item.type,
-            Math.round(item.size / 1024),
-            transaction?.description ?? "Belum dikaitkan",
-            item.notes || "-",
-            formatDate(item.uploadedAt.slice(0, 10)),
-          ];
-        }),
-      ],
-      [34, 28, 12, 42, 34, 18],
-    );
-
-    XLSX.writeFile(workbook, `laporan-cash-flow-masjid-${activeMonth}.xlsx`);
-  }
-
   return (
     <main className="min-h-screen">
       <section className="border-b border-emerald-900/10 bg-white">
@@ -639,7 +547,7 @@ export function CashFlowDashboard() {
                 </h1>
                 <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
                   Monitoring pemasukan, pengeluaran, saldo kas bank dan kas tunai,
-                  lampiran nota pembelian, serta laporan bulanan siap unduh Excel.
+                  lampiran nota pembelian, serta laporan bulanan siap unduh PDF.
                 </p>
                 <div className="mt-3 flex flex-wrap items-center gap-2 text-xs font-bold">
                   <span className="rounded bg-mosque-mint px-2.5 py-1 text-mosque-green">
@@ -662,14 +570,14 @@ export function CashFlowDashboard() {
                   </option>
                 ))}
               </select>
-              <button
-                type="button"
-                onClick={downloadMonthlyExcel}
+              <a
+                href={`/api/cash-flow/report?month=${activeMonth}`}
+                download={`laporan-buku-kas-masjid-${activeMonth}.pdf`}
                 className="inline-flex h-11 items-center justify-center gap-2 rounded bg-mosque-green px-4 text-sm font-bold text-white transition hover:bg-mosque-ink"
               >
                 <Download aria-hidden="true" className="h-4 w-4" />
-                Download Excel
-              </button>
+                Download PDF
+              </a>
             </div>
           </div>
 
